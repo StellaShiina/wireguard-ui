@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Management Panel - WireGuard UI</title>
+  <style>
+    :root {
+      color-scheme: dark;
+    }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      margin: 0;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 16px;
+      background: #111827;
+      position: sticky;
+      top: 0;
+    }
+
+    header h1 {
+      font-size: 18px;
+      margin: 0;
+    }
+
+    .container {
+      padding: 16px;
+      max-width: 1000px;
+      margin: 0 auto;
+    }
+
+    .card {
+      background: #1f2937;
+      border: 1px solid #374151;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .col {
+      flex: 1 1 220px;
+    }
+
+    input,
+    select {
+      width: 95%;
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #0b1220;
+      color: #e2e8f0;
+    }
+
+    label {
+      display: block;
+      font-size: 13px;
+    }
+
+    button {
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: none;
+      background: #38bdf8;
+      color: #0b1220;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button.secondary {
+      background: #a78bfa;
+    }
+
+    button.danger {
+      background: #f87171;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid #374151;
+      padding: 8px;
+      font-size: 14px;
+    }
+
+    .peer-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .msg {
+      margin-top: 8px;
+      min-height: 20px;
+      color: #93c5fd;
+    }
+
+    .warn {
+      color: #fbbf24;
+    }
+
+    .col.create {
+      display: flex;
+      justify-content: flex-start;
+      align-items: end;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1>WireGuard Management Panel</h1>
+    <div>
+      <span id="wgStatus" style="margin-right:12px; font-weight:600;">WG Status: Detecting...</span>
+      <button id="btnStart" class="secondary">Start</button>
+      <button id="btnStop" class="secondary">Stop</button>
+      <button id="btnRestart" class="secondary">Restart</button>
+      <button id="btnLogout" class="danger">Logout</button>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="card" id="serverCard">
+      <h2>Server Configuration</h2>
+      <div class="row">
+        <div class="col"><label>Public IP<input id="srvPublicIP" /></label></div>
+        <div class="col"><label>Port<input id="srvPort" type="number" /></label></div>
+        <div class="col"><label>Enable IPv6 <select id="srvEnableIPv6">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select></label></div>
+        <div class="col"><label>IPv4 Subnet<input id="srvSubnetV4" placeholder="e.g. 10.7.21.0/24" /></label></div>
+        <div class="col"><label>IPv6 Subnet<input id="srvSubnetV6" placeholder="e.g. fd00:7:21::/64" /></label></div>
+      </div>
+      <div class="msg" id="srvMsg"></div>
+      <button id="btnSaveServer">Save Configuration</button>
+      <div class="warn">Note: Changing the subnet will clear all Peers and delete their configuration files.</div>
+    </div>
+
+    <div class="card">
+      <h2>Peers</h2>
+      <div class="row">
+        <div class="col"><label>Name<input id="newPeerName" placeholder="Optional" /></label></div>
+        <div class="col create"><button id="btnCreatePeer">Create Peer</button></div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>UUID</th>
+            <th>IPv4</th>
+            <th>IPv6</th>
+            <th>Name</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="peersTbody"></tbody>
+      </table>
+      <div class="msg" id="peerMsg"></div>
+    </div>
+
+    <!-- WireGuard detailed status, only displayed when the service is running -->
+    <div class="card" id="wgDetailCard" style="display:none;">
+      <h2>WireGuard Detailed Status</h2>
+      <pre id="wgDetail" style="white-space:pre-wrap; background:#0b1220; padding:12px; border-radius:8px; border:1px solid #334155;"></pre>
+    </div>
+  </div>
+
+  <script>
+    let server = null; let peers = [];
+
+    async function api(path, opts) {
+      const resp = await fetch(path, { ...opts, headers: { 'Content-Type': 'application/json', ...(opts && opts.headers) } });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+      return data;
+    }
+
+    async function loadAll() {
+      // If not logged in, the backend page middleware has already redirected; perform another check here.
+      const chk = await api('/auth/check');
+      if (!chk.authenticated) { location.href = '/login'; return; }
+      const cfgs = await api('/api/v1/configs');
+      server = cfgs.server; peers = cfgs.peers || [];
+      renderServer(); renderPeers();
+      // Refresh WG status immediately after initial load
+      pollWGStatus().catch(() => { });
+    }
+
+    function renderServer() {
+      document.getElementById('srvPublicIP').value = server.PublicIP || '';
+      document.getElementById('srvPort').value = server.Port || 51821;
+      document.getElementById('srvEnableIPv6').value = String(!!server.EnableIPv6);
+      document.getElementById('srvSubnetV4').value = server.SubnetV4 || '';
+      document.getElementById('srvSubnetV6').value = server.SubnetV6 || '';
+    }
+
+    function renderPeers() {
+      const tbody = document.getElementById('peersTbody');
+      tbody.innerHTML = '';
+      for (const p of peers) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${p.UUID}</td>
+          <td>${p.IPv4 || ''}</td>
+          <td>${p.IPv6 || ''}</td>
+          <td>
+            <input value="${p.Name || ''}" data-uuid="${p.UUID}" class="peer-name" />
+          </td>
+          <td class="peer-actions">
+            <button data-dl="${p.UUID}">Download</button>
+            <button data-save="${p.UUID}">Save Name</button>
+            <button class="danger" data-del="${p.UUID}">Delete</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    async function saveServer() {
+      // Secondary confirmation before execution
+      if (!confirm('Confirm saving server configuration? This will invalidate all client configurations.')) return;
+      const msg = document.getElementById('srvMsg'); msg.textContent = '';
+      try {
+        const body = {
+          public_ip: document.getElementById('srvPublicIP').value.trim(),
+          port: Number(document.getElementById('srvPort').value),
+          enable_ipv6: document.getElementById('srvEnableIPv6').value === 'true',
+          subnet_v4: document.getElementById('srvSubnetV4').value.trim(),
+          subnet_v6: document.getElementById('srvSubnetV6').value.trim(),
+        };
+        // Key logic: Changing the subnet will clear peers; frontend prompt is already visually presented.
+        const data = await api(`/api/v1/configs/server/${server.UUID}`, { method: 'POST', body: JSON.stringify(body) });
+        msg.textContent = data.message || 'Saved';
+        // Automatically restart WireGuard after success
+        await wgCall('restart');
+        await loadAll();
+      } catch (e) { msg.textContent = e.message; }
+    }
+
+    async function createPeer() {
+      const msg = document.getElementById('peerMsg'); msg.textContent = '';
+      try {
+        const name = document.getElementById('newPeerName').value.trim();
+        // Key logic: Backend generates public/private keys, response does not include keys, only returns peer info and generated file path.
+        const data = await api('/api/v1/configs/peer', { method: 'POST', body: JSON.stringify({ name: name || null }) });
+        msg.textContent = `Peer created: ${data.peer.UUID}`;
+        document.getElementById('newPeerName').value = '';
+        // Automatically restart WireGuard after success
+        await wgCall('restart');
+        await loadAll();
+      } catch (e) { msg.textContent = e.message; }
+    }
+
+    async function savePeerName(uuid, name) {
+      const msg = document.getElementById('peerMsg'); msg.textContent = '';
+      try {
+        const data = await api(`/api/v1/configs/peer/${uuid}`, { method: 'PUT', body: JSON.stringify({ name }) });
+        msg.textContent = data.message || 'Name saved';
+        await loadAll();
+      } catch (e) { msg.textContent = e.message; }
+    }
+
+    async function deletePeer(uuid) {
+      // Secondary confirmation
+      if (!confirm('Confirm deleting Peer? This will invalidate client configurations.')) return;
+      const msg = document.getElementById('peerMsg'); msg.textContent = '';
+      try {
+        const data = await api(`/api/v1/configs/peer/${uuid}`, { method: 'DELETE' });
+        msg.textContent = data.message || 'Deleted';
+        await loadAll();
+      } catch (e) { msg.textContent = e.message; }
+    }
+
+    function downloadPeer(uuid) {
+      // Directly trigger browser download; due to same-origin Cookie, the backend will generate and return the file.
+      window.location.href = `/api/v1/configs/peer/${uuid}`;
+    }
+
+    async function wgCall(action) {
+      const msg = document.getElementById('srvMsg'); msg.textContent = '';
+      try {
+        const data = await api(`/api/v1/wg/${action}`, { method: 'POST' });
+        msg.textContent = data.message;
+        // Refresh status after operation is complete
+        pollWGStatus().catch(() => { });
+      } catch (e) { msg.textContent = e.message; }
+    }
+
+    async function fetchWGShow() {
+      const card = document.getElementById('wgDetailCard');
+      const pre = document.getElementById('wgDetail');
+      try {
+        const detail = await api('/api/v1/wg/show', { method: 'GET' });
+        pre.textContent = detail.output || '(No output)';
+        card.style.display = 'block';
+      } catch (e) {
+        // When wg is unavailable or command fails, do not display the detailed card
+        pre.textContent = '';
+        card.style.display = 'none';
+      }
+    }
+
+    async function pollWGStatus() {
+      const el = document.getElementById('wgStatus');
+      try {
+        const data = await api('/api/v1/wg/status', { method: 'GET' });
+        if (data.status === 'ok') {
+          el.textContent = 'WG Status: Running';
+          el.style.color = '#34d399';
+          // Request and display detailed status only when running
+          await fetchWGShow();
+        } else {
+          el.textContent = 'WG Status: Not Running';
+          el.style.color = '#f87171';
+          const card = document.getElementById('wgDetailCard');
+          const pre = document.getElementById('wgDetail');
+          pre.textContent = '';
+          card.style.display = 'none';
+        }
+      } catch (e) {
+        el.textContent = 'WG Status: Failed to retrieve';
+        el.style.color = '#fbbf24';
+        const card = document.getElementById('wgDetailCard');
+        const pre = document.getElementById('wgDetail');
+        pre.textContent = '';
+        card.style.display = 'none';
+      }
+    }
+
+    // Event binding
+    document.getElementById('btnSaveServer').addEventListener('click', saveServer);
+    document.getElementById('btnCreatePeer').addEventListener('click', createPeer);
+    document.getElementById('btnLogout').addEventListener('click', async () => { await api('/auth/logout'); location.href = '/login'; });
+    document.getElementById('btnStart').addEventListener('click', () => wgCall('start'));
+    document.getElementById('btnStop').addEventListener('click', () => wgCall('stop'));
+    document.getElementById('btnRestart').addEventListener('click', () => wgCall('restart'));
+
+    document.getElementById('peersTbody').addEventListener('click', (e) => {
+      const t = e.target; const dl = t.getAttribute('data-dl'); const sv = t.getAttribute('data-save'); const del = t.getAttribute('data-del');
+      if (dl) downloadPeer(dl);
+      if (sv) {
+        const input = document.querySelector(`input.peer-name[data-uuid="${sv}"]`);
+        savePeerName(sv, (input && input.value) || '');
+      }
+      if (del) deletePeer(del);
+    });
+
+    // Initial load
+    loadAll().catch(err => { console.error(err); });
+    // Poll WG status every 30s
+    setInterval(() => { pollWGStatus().catch(() => { }); }, 30000);
+  </script>
+</body>
+<!-- Management Panel Key Notes:
+  - All APIs require authentication, Cookie is set by the login page;
+  - The backend is responsible for generating WireGuard public/private keys; API response does not return keys;
+  - Updating the Server subnet will clear Peers and delete client configuration files;
+  - WireGuard control buttons call backend systemctl to control wg-quick@{interface name}.
+-->
+
+</html>

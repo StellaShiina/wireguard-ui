@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+
+    .card {
+      background: #1e293b;
+      padding: 24px;
+      border-radius: 12px;
+      width: 320px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+    }
+
+    h1 {
+      margin: 0 0 16px;
+      font-size: 20px;
+    }
+
+    label {
+      display: block;
+      margin-top: 12px;
+      font-size: 14px;
+    }
+
+    input {
+      width: 90%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #334155;
+      background: #0b1220;
+      color: #e2e8f0;
+      margin-top: 6px;
+    }
+
+    button {
+      margin-top: 16px;
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 8px;
+      background: #38bdf8;
+      color: #0b1220;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      opacity: .6;
+      cursor: not-allowed;
+    }
+
+    .err {
+      color: #fca5a5;
+      margin-top: 10px;
+      min-height: 20px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="card">
+    <h1>Login</h1>
+    <label>Username
+      <input id="username" placeholder="Username" />
+    </label>
+    <label>Password
+      <input id="password" type="password" placeholder="Password" />
+    </label>
+    <button id="loginBtn">Login</button>
+    <div class="err" id="err"></div>
+  </div>
+
+  <script>
+    // Key logic: Use JSON for login, the server sets a JWT Cookie for subsequent authentication
+    const btn = document.getElementById('loginBtn');
+    const errEl = document.getElementById('err');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true; errEl.textContent = '';
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value.trim();
+      try {
+        const resp = await fetch('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password }),
+          credentials: 'include', // Key: Ensure same-origin Cookie sending/receiving
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || 'Login failed');
+        location.href = '/';
+      } catch (e) {
+        errEl.textContent = e.message;
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+<!-- Login page complete: The backend will verify and set the Cookie. Unauthenticated access to / will be redirected to /login. -->
+
+</html>
