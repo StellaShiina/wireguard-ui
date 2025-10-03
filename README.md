@@ -7,6 +7,12 @@ Overview
 - Backend in Go, HTML templates for the frontend, PostgreSQL for state.
 - Ships with a one-click installer that sets up Docker, PostgreSQL, service, and IP forwarding.
 
+Scope & Disclaimer
+------------------
+- Intended for LAN access to services and devices behind your server.
+- No guarantee is given for availability or results outside LAN scenarios (for example, full‑tunnel internet access or arbitrary routing).
+- For broader use cases, simple secondary development is possible: adjust configuration generation in `wireguard/generator.go`, extend JSON handlers under `handlers/`, or register additional routes in `main.go`.
+
 Quick Start (One‑Command Install)
 ---------------------------------
 - Requirements: `git`, `curl`, `bash`, and either `root` or `sudo` privileges.
@@ -62,6 +68,66 @@ Getting the Binary
 ```
 go build -o wireguard-ui ./
 ```
+
+HTTP API
+--------
+- Authentication is cookie-based JWT. Obtain a token via `POST /auth/login`; all endpoints under `/api/v1/*` require authentication and will return `401` JSON if the cookie is missing or invalid.
+
+Auth
+----
+- `POST /auth/login`
+  - Request: `{"username":"...", "password":"..."}`
+  - Success: `200 {"message":"Login successful","user":"..."}`; sets cookie for subsequent requests.
+  - Errors: `400` invalid body, `401` invalid credentials, `500` token generation failure.
+- `GET /auth/logout`
+  - Success: `200 {"message":"Logout successful"}`
+- `GET /auth/check`
+  - Success: `200 {"authenticated":true,"username":"..."}`
+  - Unauthenticated: `401 {"authenticated":false}`
+
+Configs
+-------
+- `GET /api/v1/configs`
+  - Success: `200 {"server": {...}, "peers": [...] }`
+  - Errors: `404` server not initialized; `500` on database errors.
+- `POST /api/v1/configs/server/:uuid`
+  - Body: any subset of `public_ip`, `port`, `enable_ipv6`, `subnet_v4`, `subnet_v6`.
+  - Success: `200 {"message":"server updated; regenerated keys and peer configs"}`
+  - Side effects: peers cleared if subnet changes; server and peer configs regenerated.
+  - Errors: `404` server not found; `400` invalid body or no fields; `500` DB or generation errors.
+- `POST /api/v1/configs/peer`
+  - Body: `{"name":"optional"}`
+  - Success: `200 {"peer": {...}, "path": "/path/to/clients/<uuid>.conf"}`
+- `PUT /api/v1/configs/peer/:uuid`
+  - Body: `{"name":"..."}`
+  - Success: `200 {"message":"peer updated"}`
+- `DELETE /api/v1/configs/peer/:uuid`
+  - Success: `200 {"message":"peer deleted"}`
+- `GET /api/v1/configs/peer/:uuid`
+  - Success: attachment download of the `.conf` file.
+  - Errors: `500` server not initialized; `404` peer not found.
+
+WireGuard Control
+-----------------
+- `POST /api/v1/wg/start`
+  - Starts `<WG_MODE>-quick@<WG_INTERFACE>` when the config exists in `WG_CONF_DIR`.
+  - Success: `200 {"message":"wireguard started","output":"...","service":"wg-quick@wg0"}`
+  - Errors: `400` config missing; `500` enable failed.
+- `POST /api/v1/wg/stop`
+  - Success: `200 {"message":"wireguard stopped","output":"...","service":"wg-quick@wg0"}`
+- `POST /api/v1/wg/restart`
+  - Success: `200 {"message":"wireguard restarted","output":"...","service":"wg-quick@wg0"}`
+- `GET /api/v1/wg/status`
+  - Success: `200 {"status":"ok","output":"...","service":"wg-quick@wg0"}`
+  - Inactive: `200 {"status":"error","output":"...","error":"...","service":"wg-quick@wg0"}`
+- `GET /api/v1/wg/show`
+  - Success: `200 {"output":"..."}`
+  - Errors: `500` when `wg show` fails.
+
+Notes
+-----
+- Client configs route only the server’s subnets (`AllowedIPs` set to `server.SubnetV4` and optionally `server.SubnetV6`). Internet traffic is not tunneled by default; use server-side NAT to reach LAN resources.
+- Environment overrides: see Configuration section; common variables include `WG_CONF_DIR`, `WG_CLIENTS_DIR`, `WG_EXTERNAL_IF`, `WG_INTERFACE`, `WG_MODE`, `UI_ADDR`, `UI_PORT`.
 
 Development (For Developers)
 ----------------------------
