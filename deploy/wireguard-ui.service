@@ -1,0 +1,24 @@
+# WireGuard UI systemd unit
+# Description:
+# - The program will prioritize reading environment variables from /etc/wireguard-ui/.env (main.go already implemented);
+# - WorkingDirectory must point to the directory containing templates/;
+# - ExecStart points to the path of the installed executable file.
+
+[Unit]
+Description=WireGuard UI Web Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Environment file (do not interrupt if missing)
+EnvironmentFile=-/etc/wireguard-ui/.env
+# Working directory: must contain templates/ directory
+WorkingDirectory=/opt/wireguard-ui
+# Executable file path
+ExecStart=/opt/wireguard-ui/wireguard-ui
+Restart=on-failure
+RestartSec=3s
+
+[Install]
+WantedBy=multi-user.target
